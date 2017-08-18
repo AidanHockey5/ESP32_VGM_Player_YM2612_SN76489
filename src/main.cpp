@@ -8,7 +8,7 @@
 
 //File Stream
 File vgm;
-const unsigned int MAX_CMD_BUFFER = 64;
+const unsigned int MAX_CMD_BUFFER = 32;
 char cmdBuffer[MAX_CMD_BUFFER];
 uint32_t bufferPos = 0;
 
@@ -38,6 +38,13 @@ bool play = true;
 //SONG INFO
 const int NUMBER_OF_FILES = 8; //How many VGM files do you have stored in flash? (Files should be named (1.vgm, 2.vgm, 3.vgm, etc);
 int currentTrack = 1;
+
+//GD3 Data
+#define MAX_GD3_SIZE 2048
+String trackTitle;
+String gameName;
+String systemName;
+String gameDate;
 
 void FillBuffer()
 {
@@ -112,6 +119,114 @@ void SilenceAllChannels()
   digitalWrite(YM_IC, HIGH);
 }
 
+uint32_t EoFOffset = 0;
+uint32_t VGMVersion = 0;
+uint32_t GD3Offset = 0;
+void GetHeaderData() //Scrape off the important VGM data from the header, then drop down to the GD3 area for song info data
+{
+  for(int i = bufferPos; i<0x03; i++)GetByte(); //V - G - M
+  for ( int i = bufferPos; i < 0x07; i++ ) //0x04->0x07 EoF Offset
+  {
+    EoFOffset += uint32_t(GetByte()) << ( 8 * i );
+  }
+  for ( int i = bufferPos; i < 0x0B; i++ ) //0x08->0x0B VGM Version
+  {
+    VGMVersion += uint32_t(GetByte()) << ( 8 * i );
+  }
+  for(int i = bufferPos; i<0x13; i++)GetByte(); //Skip 0x0C->0x13
+  for ( int i = bufferPos; i < 0x17; i++ ) //0x14->0x17 GD3 Data Offset
+  {
+      GD3Offset += uint32_t(GetByte()) << ( 8 * i );
+  }
+  // Serial.print("GD3 OFFSET: ");
+  // Serial.println(GD3Offset);
+  uint32_t bufferReturnPosition = vgm.position();
+  vgm.seek(0, SeekSet);
+  vgm.seek(GD3Offset+0x14, SeekSet);
+  // Serial.print("GD3 POSITION: ");
+  // Serial.println(vgm.position());
+  uint32_t GD3Position = 0x00;
+  for(GD3Position; GD3Position<0x03; GD3Position++){ Serial.print(vgm.read()); } //G - D - 3
+  for(GD3Position; GD3Position<0x07; GD3Position++){ Serial.print(vgm.read());}//Version data
+  uint32_t dataLength = 0;
+  for (int i = GD3Position; i < GD3Position+4; i++ ) //Get size of data payload
+  {
+    dataLength += uint32_t(vgm.read()) << ( 8 * i );
+  }
+  GD3Position+=4;
+  char rawGD3String[MAX_GD3_SIZE];
+  // Serial.print("DATA LENGTH: ");
+  // Serial.println(dataLength);
+  if(dataLength < MAX_GD3_SIZE)
+  {
+    for(int i = 0; i<dataLength; i++) //Convert 16-bit characters to 8 bit chars. This may cause issues with non ASCII characters. (IE Japanese chars.)
+    {
+      vgm.read();
+      rawGD3String[i] = vgm.read();
+    }
+    GD3Position = 0;
+
+    while(rawGD3String[GD3Position] != 0) //Parse out the track title.
+    {
+      trackTitle += rawGD3String[GD3Position];
+      GD3Position++;
+    }
+    GD3Position++;
+    while(rawGD3String[GD3Position] != 0) GD3Position++; //Skip Japanese track title.
+    GD3Position++;
+    while(rawGD3String[GD3Position] != 0) //Parse out the game name.
+    {
+      gameName += rawGD3String[GD3Position];
+      GD3Position++;
+    }
+    GD3Position++;
+    while(rawGD3String[GD3Position] != 0) GD3Position++;//Skip Japanese game name.
+    GD3Position++;
+    while(rawGD3String[GD3Position] != 0) //Parse out the system name.
+    {
+      systemName += rawGD3String[GD3Position];
+      GD3Position++;
+    }
+    GD3Position++;
+    while(rawGD3String[GD3Position] != 0) GD3Position++;//Skip Japanese system name.
+    GD3Position++;
+    while(rawGD3String[GD3Position] != 0) GD3Position++;//Skip English authors
+    GD3Position++;
+    // while(rawGD3String[GD3Position] != 0) //Parse out the music authors (I skipped this since it sometimes produces a ton of data! Uncomment this, comment skip, add vars if you want this.)
+    // {
+    //   musicAuthors += rawGD3String[GD3Position];
+    //   GD3Position++;
+    // }
+    while(rawGD3String[GD3Position] != 0) GD3Position++;//Skip Japanese authors.
+    GD3Position++;
+    while(rawGD3String[GD3Position] != 0) //Parse out the game date
+    {
+      gameDate += rawGD3String[GD3Position];
+      GD3Position++;
+    }
+    GD3Position++;
+    Serial.println(trackTitle);
+    Serial.println(gameName);
+    Serial.println(systemName);
+    Serial.println(gameDate);
+  }
+  else
+  {
+    Serial.println("GD3 data too large!");
+  }
+  vgm.seek(bufferReturnPosition, SeekSet); //Send the file seek back to the original buffer position so we don't confuse our program.
+  for(int i = bufferPos; i<0x17; i++) GetByte(); //Ignore the remaining unimportant VGM header data
+  for ( int i = bufferPos; i < 0x1B; i++ ) //0x18->0x1B : Get wait Samples count
+  {
+    waitSamples += uint32_t(GetByte()) << ( 8 * i );
+  }
+  for ( int i = bufferPos; i < 0x1F; i++ ) //0x1C->0x1F : Get loop offset Postition
+  {
+    loopOffset += uint32_t(GetByte()) << ( 8 * i );
+  }
+  for ( int i = bufferPos; i < 0x40; i++ ) GetByte(); //Go to VGM data start
+}
+
 void StartupSequence()
 {
   waitSamples = 0;
@@ -129,20 +244,8 @@ void StartupSequence()
   else
     Serial.println("Opened successfully...");
   FillBuffer();
-
-  for(int i = bufferPos; i<0x17; i++) GetByte(); //Ignore the unimportant VGM header data
-
-    for ( int i = bufferPos; i < 0x1B; i++ ) //0x18->0x1B : Get wait Samples count
-    {
-      waitSamples += uint32_t(GetByte()) << ( 8 * i );
-    }
-
-    for ( int i = bufferPos; i < 0x1F; i++ ) //0x1C->0x1F : Get loop offset Postition
-    {
-      loopOffset += uint32_t(GetByte()) << ( 8 * i );
-    }
-    for ( int i = bufferPos; i < 0x40; i++ ) GetByte(); //Go to VGM data start
-    singleSampleWait = ((1000.0 / (sampleRate/(float)1))*1000);
+  GetHeaderData();
+  singleSampleWait = ((1000.0 / (sampleRate/(float)1))*1000);
 
     for(int i = 0; i<16; i++)
     {
