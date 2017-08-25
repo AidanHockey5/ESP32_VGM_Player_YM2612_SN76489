@@ -10,3 +10,5 @@ You can find the predecessor to this project here: https://github.com/AidanHocke
 Due to shift-register inconsistancy errors and the complexities involved with voltage translation, the ESP-32 version of this project will be put on hold indefinitely. This isn't the end though - I plan to explore other microcontrollers that are native 5v tolerant. The ESP32 just isn't as well-supported as it needs to be yet.
 Code-wise, this repository seems to work fine, so I'll keep it up for future reference. 
 I reccomend visiting the previous project based on the ESP8266 for now: https://github.com/AidanHockey5/ESP8266_VGM_Player_PSG_YM2612
+
+The direct new predecessor to the ESP8266 version of this project will now be based on the Teensy 3.5. Initial tests have been very successful! https://github.com/AidanHockey5/Teensy_3_5_VGM_Player_YM2612_SN76489
